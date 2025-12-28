@@ -3,91 +3,124 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Full Resolution Hologram</title>
+    <title>Holographic Hand Interface - GitHub Edition</title>
     <style>
-        /* Aseguramos que el cuerpo ocupe el 100% sin scroll */
         body, html { 
-            margin: 0; 
-            padding: 0; 
-            width: 100%; 
-            height: 100%; 
-            overflow: hidden; 
-            background: #00050a; 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            overflow: hidden; background: #00050a; 
         }
-        canvas { 
-            display: block; 
-            width: 100vw; 
-            height: 100vh; 
-        }
+        canvas { display: block; width: 100vw; height: 100vh; }
         #video-container {
             position: absolute; bottom: 20px; right: 20px;
             width: 180px; height: 135px; border-radius: 8px;
             overflow: hidden; border: 1px solid #00f2ff;
             transform: scaleX(-1); z-index: 10; opacity: 0.3;
         }
+        #ui {
+            position: absolute; top: 20px; left: 20px;
+            color: #00f2ff; font-family: 'Courier New', monospace;
+            z-index: 10; pointer-events: none; text-shadow: 0 0 5px #00f2ff;
+        }
         video { width: 100%; height: 100%; object-fit: cover; }
     </style>
 </head>
 <body>
 
-<div id="video-container"><video id="input_video"></video></div>
+<div id="ui">
+    <div>SYSTEM: ONLINE</div>
+    <div>GESTURE: PINCH TO GRAB</div>
+</div>
+
+<div id="video-container">
+    <video id="input_video"></video>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 
 <script type="importmap">
-    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+{
+    "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+    }
+}
 </script>
-
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
 <script type="module">
 import * as THREE from 'three';
 
 const SETTINGS = {
     particleCount: 95000,
-    handScale: 18, // Aumentado ligeramente para pantallas grandes
-    grabDistance: 2.5
+    handScale: 18,
+    grabDistance: 2.8
 };
 
-// --- OBJETOS ---
+// --- CLASE OBJETO HOLOGRÁFICO ---
 class HologramObject {
     constructor(scene) {
         this.group = new THREE.Group();
         const geometry = new THREE.OctahedronGeometry(2.5, 2);
+        
         this.wire = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({
-            color: 0x00f2ff, emissive: 0x00f2ff, transparent: true, opacity: 0.4, wireframe: true
+            color: 0x00f2ff, 
+            emissive: 0x00f2ff, 
+            transparent: true, 
+            opacity: 0.4, 
+            wireframe: true
         }));
-        this.group.add(this.wire);
+        
+        this.core = new THREE.Mesh(new THREE.OctahedronGeometry(2, 2),
+            new THREE.MeshBasicMaterial({ color: 0x00f2ff, transparent: true, opacity: 0.1 }));
+        
+        this.group.add(this.wire, this.core);
         this.reset();
         scene.add(this.group);
+        
         this.velocity = new THREE.Vector3();
         this.grabbedBy = null;
     }
-    reset() { this.group.position.set((Math.random()-0.5)*20, (Math.random()-0.5)*15, -5); }
+
+    reset() {
+        this.group.position.set((Math.random()-0.5)*20, (Math.random()-0.5)*12, -5);
+    }
+
     update() {
         if (this.grabbedBy) {
+            // Seguir el punto de la palma (nudillo medio)
             this.group.position.lerp(this.grabbedBy.points[9].v, 0.2);
-            this.group.rotation.y += 0.05;
+            this.group.rotation.y += 0.08;
+            this.wire.material.opacity = 0.8;
         } else {
+            // Gravedad suave hacia el centro y fricción
             this.velocity.add(this.group.position.clone().multiplyScalar(-0.001));
             this.velocity.multiplyScalar(0.95);
             this.group.position.add(this.velocity);
+            this.group.rotation.y += 0.01;
+            this.wire.material.opacity = 0.4;
         }
     }
 }
 
-// --- MANO CON PALMA REFORZADA ---
+// --- CLASE MANO VOLUMÉTRICA MEJORADA ---
 class VolumetricHand {
     constructor(scene) {
         this.points = Array.from({ length: 21 }, () => ({ v: new THREE.Vector3(), init: false }));
         this.geometry = new THREE.BufferGeometry();
         this.positions = new Float32Array(SETTINGS.particleCount * 3);
+        
         this.material = new THREE.PointsMaterial({
-            size: 0.045, 
-            color: 0x00f2ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0
+            size: 0.045,
+            color: 0x00f2ff,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            opacity: 0
         });
+        
         this.mesh = new THREE.Points(this.geometry, this.material);
         this.geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
         scene.add(this.mesh);
+        
         this.isTracking = false;
         this.isPinching = false;
     }
@@ -107,6 +140,7 @@ class VolumetricHand {
             const t = Math.random();
             const rho = Math.pow(Math.random(), 0.6) * THREE.MathUtils.lerp(rS, rE, t);
             const phi = Math.random() * Math.PI * 2;
+            
             this.positions[idx] = start.x + nDir.x * t * len + (tangent.x * Math.cos(phi) + bitangent.x * Math.sin(phi)) * rho;
             this.positions[idx+1] = start.y + nDir.y * t * len + (tangent.y * Math.cos(phi) + bitangent.y * Math.sin(phi)) * rho;
             this.positions[idx+2] = start.z + nDir.z * t * len + (tangent.z * Math.cos(phi) + bitangent.z * Math.sin(phi)) * rho * flattenZ;
@@ -121,16 +155,29 @@ class VolumetricHand {
                 if (!this.points[i].init) { this.points[i].v.copy(target); this.points[i].init = true; }
                 this.points[i].v.lerp(target, 0.25);
             });
+            
+            // Detección de pinza (pulgar e índice)
             this.isPinching = this.points[4].v.distanceTo(this.points[8].v) < SETTINGS.grabDistance;
             
             let off = 0;
             const pts = this.points.map(p => p.v);
-            // PALMA SÓLIDA
-            [1, 5, 9, 13, 17].forEach(idx => { this.injectVolume(pts[0], pts[idx], 1.4, 1.0, 5500, off, 0.3); off += 5500; });
-            this.injectVolume(pts[0], pts[9], 1.8, 1.2, 9000, off, 0.25); off += 9000;
+
+            // RELLENO DE PALMA (Estructura reforzada)
+            [1, 5, 9, 13, 17].forEach(idx => {
+                this.injectVolume(pts[0], pts[idx], 1.4, 1.0, 5500, off, 0.35); 
+                off += 5500;
+            });
+            // Núcleo central de la palma para volumen extra
+            this.injectVolume(pts[0], pts[9], 1.8, 1.3, 9000, off, 0.3); 
+            off += 9000;
+
             // DEDOS
-            [[1,2,3,4], [5,6,7,8], [9,10,11,12], [13,14,15,16], [17,18,19,20]].forEach(f => {
-                for (let i = 0; i < 3; i++) { this.injectVolume(pts[f[i]], pts[f[i+1]], 0.7, 0.6, 2800, off, 1.0); off += 2800; }
+            const fingers = [[1,2,3,4], [5,6,7,8], [9,10,11,12], [13,14,15,16], [17,18,19,20]];
+            fingers.forEach(f => {
+                for (let i = 0; i < 3; i++) {
+                    this.injectVolume(pts[f[i]], pts[f[i+1]], 0.7, 0.6, 2800, off, 1.0);
+                    off += 2800;
+                }
             });
             this.geometry.attributes.position.needsUpdate = true;
         } else { this.isTracking = false; }
@@ -142,52 +189,69 @@ class VolumetricHand {
     }
 }
 
-// --- ESCENA Y RENDERER RESPONSIVO ---
+// --- SETUP ESCENA ---
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 
-// Ajuste inicial de resolución
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x00050a);
 document.body.appendChild(renderer.domElement);
 
 camera.position.z = 25;
-scene.add(new THREE.PointLight(0x00f2ff, 15, 50), new THREE.AmbientLight(0x001122, 1));
+
+// Iluminación
+const light = new THREE.PointLight(0x00f2ff, 20, 60);
+light.position.set(0, 10, 10);
+scene.add(light);
+scene.add(new THREE.AmbientLight(0x001122, 1.5));
 
 const hands = [new VolumetricHand(scene), new VolumetricHand(scene)];
-const objects = [new HologramObject(scene), new HologramObject(scene)];
+const objects = [new HologramObject(scene), new HologramObject(scene), new HologramObject(scene)];
 
-// MEDIA PIPE
+// CONFIGURACIÓN MEDIAPIPE
 const videoElement = document.getElementById('input_video');
 const handsMP = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-handsMP.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.8, minTrackingConfidence: 0.8 });
+
+handsMP.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.8,
+    minTrackingConfidence: 0.8
+});
 
 handsMP.onResults(res => {
     hands.forEach((h, i) => h.update(res.multiHandLandmarks ? res.multiHandLandmarks[i] : null));
+    
+    // Lógica de Agarre
     objects.forEach(obj => {
         if (obj.grabbedBy) {
             if (!obj.grabbedBy.isPinching || !obj.grabbedBy.isTracking) obj.grabbedBy = null;
         } else {
             hands.forEach(h => {
-                if (h.isTracking && h.isPinching && obj.group.position.distanceTo(h.points[8].v) < 4) obj.grabbedBy = h;
+                if (h.isTracking && h.isPinching) {
+                    const dist = obj.group.position.distanceTo(h.points[8].v);
+                    if (dist < 4.5) obj.grabbedBy = h;
+                }
             });
         }
     });
 });
 
-const cam = new Camera(videoElement, { onFrame: async () => await handsMP.send({image: videoElement}), width: 1280, height: 720 });
+const cam = new Camera(videoElement, {
+    onFrame: async () => await handsMP.send({image: videoElement}),
+    width: 1280, height: 720
+});
 cam.start();
 
-// FUNCIÓN CRÍTICA: Ajuste automático de resolución al cambiar tamaño de ventana
+// AJUSTE DE RESOLUCIÓN AUTOMÁTICO
 window.addEventListener('resize', () => {
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-    
-    camera.aspect = width / height;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    
-    renderer.setSize(width, height);
+    renderer.setSize(w, h);
 });
 
 function loop() {
